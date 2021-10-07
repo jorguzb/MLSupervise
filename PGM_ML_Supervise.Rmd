@@ -1,0 +1,241 @@
+---
+title: "Projet de ML - Supervisé et Non supervisé - L'ensemble de fonctions utilisées sont expliquées dans le document word"
+output: html_document
+---
+
+### Explotation des datasets
+Comme mentioné dans l'intitulé de ce document les fonctions utilisées sont expliquées dans le document word.
+Ici une base des données unifiée est crée afin de pouvoir réaliser une prèmiere analyse exploratoire sur l'enseble des données du datasets. Il est à noter que cette analyse exploratoire est fait sur le périmètre des actifs (salarie)
+
+```{r}
+source("functions/class_curacion.R")
+# lista_data = leyendoData() 
+# lista_data = workDescUnifier(lista_data)
+# lista_data = geographicUnifier(lista_data)
+# learn_work = matcheandoData(lista_data, 
+#                             patron = "learn", 
+#                             working_status = "Working")
+#
+# write.csv("datasets/learn_job_pred.csv", row.names=F)                 
+learn_work = read.csv("datasets/learn_job_pred.csv", stringsAsFactors = TRUE, encoding = "UTF-8")
+
+learn_work$X = NULL
+learn_work$Y = NULL
+print(str(learn_work))
+```
+
+### Recherche des NA, imputation des NA avec mice et élimination des outlayer
+Tout salaire inférieur à 1200€ et supérieur à 100K€ est considéré comme une valeur outlayer
+
+```{r, fig.height = 3, fig.width = 5, fig.align = 'center'}
+buscandoNAS(list(learn_work))
+learn_work = imputeSportsWorkingHoursOutlierHandling(learn_work)
+str(learn_work)
+```
+
+### Analyse exploratoire (voir documents: "1_Data Analyse en fonction de salaire" et "2_Data analyse par variable")
+Cette partie permet de mieux comprendre les données. Qaund le nombre des modalités est trés élevé l'analyse est très complex (exp, le département de travail), pour ça une analyse des en fonction de départements a été fait dans la partie Non supervisé.
+
+1_Data Analyse en fonction de salaire, chaque varaible est representée en focntion de l'emolument qui est la variable à prédire :
+
+-Le secteur publique bénéfice des salaires plus intéressants que des autres catégories.
+-Les grands entreprise ( + 250 salariés)rémunèrent en moyenne mieux ces collaborateurs 
+-Les salariés qui travaillent à temps plein gagnent mieux sa vie que le temps partiel ou à domiciles
+-Sexe, il est constaté que globalment (hormis de niche espécifique) les hommes ont un salaire supérieur que les fammes (la médianne est plus importante chez les hommes). Aussi il est constaté un salaire outlayer pour les fammes à 200K€.
+
+2_Data analyse par variable, chaque variable est répresenté toute suele afin de mieux comprend ça distribution:
+
+-la variable à prédire a une repartition proche de la distribution poisson/binomiale négative
+-les variables (terms_emp, job category, job condition», employer_categorie, household, Emp) ont une modalité que regroupe l’ensemble des observations 
+-la représentation des étudiants est faible dans la basse de learn
+-le représentation de femmes et homes est équivalente dans la base d’apprentissage. La data est équilibrée
+
+
+```{r width = 17}
+learn_work_desc = read.csv("datasets/learn_job_desc.csv")
+learn_work_desc = learn_work_desc[, -grep(colnames(learn_work_desc), pattern ="Activity_type|Nom.de.la.commune|UID|F_name|LASTNAME")]
+descriptivePlotsDbJob(learn_work_desc)
+```
+
+### Graphique des coefficients R2 en fonction de la variable à prédire (Emolument)
+Ce R2 pourrais s’approché à un coefficient de corrélation entre la variable à prédire (émolument) et la variable affiché dans le graphique ci-après.
+Cette analyse a servi à identifier les variables du modèle, elles seront utilisées pour la modèlisation.
+Le variables avec des informations trés corréllés ont été écarté du modèle.
+```{r}
+# r2 = emolumentVSall(learn_work)# 1 - deviance/null.deviance
+pesos = read.csv("datasets/pesos_predictores.csv")
+par(mar=c(2,10,1,1))
+barplot(pesos[,3], 
+        names.arg = pesos[,2], 
+        horiz =T,
+        border="white",
+        las =2,
+        main = "poids des prédicteurs")
+```
+
+### Preprocessing data
+
+```{r}
+# écarter les variables "Activity_type|Nom.de.la.commune|UID|F_name|LASTNAME"
+db = learn_work[, -grep(colnames(learn_work), pattern ="Activity_type|Nom.de.la.commune|UID|F_name|LASTNAME")]
+# dataset train et test
+train = dataSubSampler(db, train = T, seed = 3141)
+test = dataSubSampler(db, train = F, seed = 3141)
+```
+
+### Modèle linéaire
+Le R^2 de ce modèle est de 69,5% avec un RMSE de 7455,9 et un AIC de 652278,5
+	
+```{r}
+mod_lineal = lm(data = train, EMOLUMENT ~ N3 + WORKING_HOURS + Occupation_42 +
+                                ECONOMIC_ACTIVITY + highest_degree + JOB_CONDITION + EMP + Sports)
+save(mod_lineal, file = "models/mod_lineal.RData")
+load("models/mod_lineal.RData")
+# predictions
+pred_reg_lin = predict(mod_lineal, test)
+yhat = pred_reg_lin
+y = test$EMOLUMENT
+RMSE0 = sqrt(sum((yhat-y)^2)/nrow(test))
+r2_0 = 1-(RMSE0^2/var(y))
+aic_0 = AIC(mod_lineal)
+df0 = data.frame("MODELO" = "lm", "r2_0" = r2_0, "RMSE" = RMSE0, "AIC" = aic_0)
+print(df0)
+```
+
+### Modèle linéaire généralisé (regression binomial negative)
+
+L'analyse exploratoire permet de penser à une distribution de poisson pour la variable à prédire "émolument".
+En revanche, l'écart entre la moyenne et la variance incline la décision de la distribution sur une  
+binôme négative.
+
+Le R^2 de ce modèle est de 69,5% avec un RMSE de 7449,8 et un AIC de 639910,7
+```{r}
+mod_bin_neg = MASS::glm.nb(data = train,
+                    EMOLUMENT ~ N3 + WORKING_HOURS + Occupation_42 +
+                    ECONOMIC_ACTIVITY + highest_degree + JOB_CONDITION+EMP+Sports)
+save(mod_bin_neg, file = "models/mod_bin_neg.RData")
+load("models/mod_bin_neg.RData") 
+# prédictions
+pred_bin_neg = predict(mod_bin_neg, test)
+yhat = exp(pred_bin_neg)
+y = test$EMOLUMENT
+RMSE1 = sqrt(sum((yhat-y)^2)/nrow(test))
+r2_1 = 1-(RMSE1^2/var(y))
+aic_1 = AIC(mod_bin_neg)
+df1 = data.frame("MODELO" = "neg_bin_lm", "r2_0" = r2_1, "RMSE" = RMSE1, "AIC" = aic_1)
+print(df1)
+```
+### XGBoost - Avec l'ensemble des variables
+
+XGBoost (Extreme Gradient Boosting) est un algorithme prédictif qui combine le pouvoir des arbres 
+de décision/régression avec l'algorithme de descente de gradient stochastique. 
+Cela  permet d'explorer l'espace des solutions optimales pour estimer la variable EMOLUMENT.
+
+la contribution des varaibles au modèle Xgboost reforce ce qui a été observé dans la correlation des variables. 
+
+```{r}
+# mod_xgboost = mod_XGboost(train)
+load("models/mod_xgboost_sinXY.RData")
+importance_matrix = xgboost::xgb.importance(model = mod_xgboost)
+xgboost::xgb.plot.importance(importance_matrix, xlab = "Feature Importance")
+```
+`
+Le R^2 de ce modèle est de 75,2% et avec un RMSE de 6714,9 (pas d'AIC calculé que pour les modèles paramétriques).
+Le meilleur modèle est le XGBoost, il a le meilleur R^2 mais aussi le RMSE baisse de plus de 700 en coparaison avec les deux premiers modèles 
+```{r}
+# Prédictions
+
+test_num = as.data.frame(lapply(test, function (x)as.numeric(x)))
+test_num
+pred_xgb = predict(mod_xgboost, as.matrix(test_num[,-9]))
+yhat = pred_xgb
+y = test_num$EMOLUMENT
+RMSE2 = sqrt(sum((yhat-y)^2)/nrow(test_num))
+r2_2 = 1-(RMSE2^2/var(y))
+df2 = data.frame("MODELO" = "xgboost", "r2_0" = r2_2, "RMSE" = RMSE2, "AIC" = NA)
+print(df2)
+
+
+```
+
+
+```{r}
+### Performing CV
+set.seed(1234)
+db_permutated = db[sample(1:nrow(db), size = nrow(db), replace = FALSE),]
+leave_k_out = function(db, k){
+        m = nrow(db)/k
+        lista_RMSE2 = list()
+        for(i in 1:m) {
+                print(i)
+                if(i == m) m = nrow(db)%%k
+                test_k  = db[k*(i-1)+1:m,]
+                train_k = db[-(k*(i-1)+1:m),]
+                # repeat adjusting process.
+                mod_xgboost = mod_XGboost(train_k, save = FALSE)
+                test_num = as.data.frame(lapply(test_k,as.numeric))
+                pred_xgb = tryCatch(predict(mod_xgboost, as.matrix(test_num[,-9])), error = function(e) NULL)
+                if(is.null(pred_xgb)) next
+                yhat = pred_xgb
+                y = test_num$EMOLUMENT
+                RMSE2 = sqrt(sum((yhat-y)^2)/nrow(test_num))
+                lista_RMSE2[[i]] = RMSE2
+                print(RMSE2)
+        }
+        return(lista_RMSE2)
+}
+### Performing CV leaving K out, with K = 1000
+# CV_RMSE2 = leave_k_out(db_permutated, 1000)
+# save(CV_RMSE2, file = "datasets/CV_RMSE2.RData")
+load("datasets/CV_RMSE2.RData")
+hist(unlist(CV_RMSE2), 
+            main = paste0("RMSE distribution after performing CV with leave k out\n(k=1000)\nMean RMSE = ", mean(unlist(CV_RMSE2))),
+            xlab = "RMSE")
+
+```
+
+### Coparaison des trois modèles:
+Comment évoqué précedament le meilleur modèle est le XGBoost avec un R^2 de 75% et le plus petit RMSE
+```{r}
+DF = do.call("rbind", list(df0,df1,df2))
+print(DF)
+```
+Loading test data and building predictions. Controlling for assigning the same 
+levels in this test as the ones used with the learning dataset.
+```{r}
+# Loading Test data
+# lista_data = leyendoData() 
+# lista_data = workDescUnifier(lista_data)
+# lista_data = geographicUnifier(lista_data)
+# TEST = matcheandoData(lista_data,
+#                       patron = "test"
+#                      )
+# TEST0 = matcheandoCode(TEST, lista_data, patron = "Work_desc|Insee")   
+# TEST0$X = NULL
+# TEST0$Y = NULL
+# # Fixing inconsenstincies between factors from train and test
+# patron_cols = paste0(setdiff(colnames(TEST0),colnames(train)), collapse = "|")
+# ind_cols = grep(pattern = patron_cols, colnames(TEST0))
+# TEST0_id = TEST0[,ind_cols]
+# write.csv(TEST0_id, "datasets/test_ids.csv", row.names=FALSE)
+
+test_id = read.csv("datasets/test_ids.csv")
+
+# TEST0_forecast = TEST0[,-ind_cols]
+# lista_levels = lapply(train,levels)
+# TEST1_forecast = TEST0_forecast
+# for(i in 1:ncol(TEST0_forecast)){
+#         if(class(TEST0_forecast[,i]) == "factor"){
+#                 ind = grep(colnames(train), pattern = colnames(TEST0_forecast)[i])
+#                 TEST1_forecast[,i]= factor(TEST0_forecast[,i], levels = lista_levels[[ind]])
+#         }
+# }
+# write.csv(TEST1_forecast, "datasets/test_forecast.csv", row.names = FALSE)
+
+test_forecast = read.csv("datasets/test_forecast.csv")
+test_forecast_num = as.matrix(as.data.frame(lapply(test_forecast,as.numeric)))
+test_forecast_num_ord =  test_forecast_num[,mod_xgboost$feature_names]
+predictions = predict(mod_xgboost, test_forecast_num_ord)
+test_predictions = cbind("UID"=test_id$UID,predictions)
+write.csv(test_predictions, "datasets/test_with_predictions.csv", row.names=FALSE)
+```
